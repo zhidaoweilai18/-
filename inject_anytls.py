@@ -19,6 +19,23 @@ def patch_file(filepath, pattern, replacement, flags=0):
         print(f"[-] 正则未匹配到目标: {filepath}")
         return False
 
+def scrub_brand_name():
+    print(">>> 开始全量清洗品牌名称 (White-labeling)...")
+    for ext in ('*.cpp', '*.h', '*.ui', 'CMakeLists.txt'):
+        for filepath in glob.glob(f'./**/{ext}', recursive=True):
+            try:
+                with open(filepath, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                # 统一转成小写来判断，彻底解决 NekoBox, nekobox, NEKOBOX 等大小写漏网问题
+                if 'neko' in content.lower():
+                    content = re.sub(r'Nekoray', 'XRAY', content, flags=re.IGNORECASE)
+                    content = re.sub(r'Nekobox', 'XRAY', content, flags=re.IGNORECASE)
+                    with open(filepath, 'w', encoding='utf-8') as f:
+                        f.write(content)
+            except Exception:
+                pass
+    print(">>> 品牌清洗完成！")
+
 def main():
     print(">>> 开始执行 AnyTLS 代码级注入手术...")
 
