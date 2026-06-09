@@ -1,4 +1,4 @@
-name: Build Stealth Client (Obfuscated Edition)
+name: Build Stealth Client (Final Edition)
 
 on:
   workflow_dispatch:
@@ -32,6 +32,17 @@ jobs:
         with:
           python-version: '3.12'
 
+      - name: Scrub Brand Names & Version (暴力白标清洗)
+        shell: bash
+        run: |
+          echo ">>> 正在执行文本级特征清洗..."
+          # 扫荡所有源码，强行替换所有大小写的 Neko
+          find . -type f \( -name "*.cpp" -o -name "*.h" -o -name "*.ui" \) -exec sed -i 's/NekoBox/XRAY/g' {} +
+          find . -type f \( -name "*.cpp" -o -name "*.h" -o -name "*.ui" \) -exec sed -i 's/Nekobox/XRAY/g' {} +
+          find . -type f \( -name "*.cpp" -o -name "*.h" -o -name "*.ui" \) -exec sed -i 's/Nekoray/XRAY/g' {} +
+          # 篡改系统底层固化的版本号
+          if [ -f "nekoray_version.txt" ]; then echo "2026.1.0-Stealth" > nekoray_version.txt; fi
+
       - name: Run Python Injector (AnyTLS Surgery)
         env:
           PYTHONIOENCODING: utf8
@@ -48,26 +59,16 @@ jobs:
         with:
           go-version: '>=1.20'
 
-      - name: Build Go Components
+      - name: Build Custom Core with gRPC (解决崩溃断连的核心步骤)
         shell: bash
         run: |
+          echo ">>> 开始拉取源码并注入 gRPC 接口编译专属核心..."
           if [ -f "./libs/get_source.sh" ]; then bash ./libs/get_source.sh; fi
           if [ -f "./libs/build_go.sh" ]; then GOOS=windows GOARCH=amd64 bash ./libs/build_go.sh; fi
 
-      - name: Inject Latest Sing-box Core & Geo Assets
+      - name: Download Geo Assets (加载全球路由地图)
         shell: pwsh
         run: |
-          # 1. 下载核心
-          $api_url = "https://api.github.com/repos/SagerNet/sing-box/releases/latest"
-          $tag = (Invoke-RestMethod -Uri $api_url).tag_name
-          $ver = $tag.TrimStart('v')
-          $dl_url = "https://github.com/SagerNet/sing-box/releases/download/$tag/sing-box-$ver-windows-amd64.zip"
-          Invoke-WebRequest -Uri $dl_url -OutFile "core.zip"
-          Expand-Archive -Path "core.zip" -DestinationPath "./core_temp"
-          Get-ChildItem -Path "./core_temp" -Filter "sing-box.exe" -Recurse | Move-Item -Destination "./sing-box.exe"
-          
-          # 2. 下载必须的路由地图数据库 (修复 geosite.db not found)
-          echo ">>> 下载全球路由数据库..."
           Invoke-WebRequest -Uri "https://github.com/SagerNet/sing-geosite/releases/latest/download/geosite.db" -OutFile "./geosite.db"
           Invoke-WebRequest -Uri "https://github.com/SagerNet/sing-geoip/releases/latest/download/geoip.db" -OutFile "./geoip.db"
 
@@ -90,22 +91,24 @@ jobs:
         run: |
           mkdir release_dist
           
-          # 生成随机名
+          # 生成随机 8 位名字
           $randName = -join ((65..90) + (97..122) + (48..57) | Get-Random -Count 8 | % {[char]$_})
           echo "RANDOM_EXE_NAME=$randName" >> $env:GITHUB_ENV
           $targetExe = "./release_dist/$randName.exe"
           
-          # 拷贝主程序、核心与路由数据库
+          # 注意：这里我们提取的是刚才我们自行编译出来的专属 nekobox_core.exe，带有 gRPC 通讯接口
           Copy-Item "./build/nekobox.exe" -Destination $targetExe
-          Copy-Item "./sing-box.exe" -Destination "./release_dist/nekobox_core.exe"
+          Copy-Item "./build/nekobox_core.exe" -Destination "./release_dist/nekobox_core.exe"
           Copy-Item "./geosite.db" -Destination "./release_dist/geosite.db"
           Copy-Item "./geoip.db" -Destination "./release_dist/geoip.db"
           
           windeployqt --release $targetExe
           
+          # UPX 极限加壳混淆
           choco install upx --no-progress
           upx --best $targetExe
           
+          # 尾部掺水：注入垃圾数据打破静态 Hash 特征
           $paddingSize = Get-Random -Minimum 10240 -Maximum 153600
           $padding = New-Object byte[] $paddingSize
           (New-Object Random).NextBytes($padding)
