@@ -32,18 +32,7 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Scrub Brand Names & Version (暴力白标清洗)
-        shell: bash
-        run: |
-          echo ">>> 正在执行文本级特征清洗..."
-          # 扫荡所有源码，强行替换所有大小写的 Neko
-          find . -type f \( -name "*.cpp" -o -name "*.h" -o -name "*.ui" \) -exec sed -i 's/NekoBox/XRAY/g' {} +
-          find . -type f \( -name "*.cpp" -o -name "*.h" -o -name "*.ui" \) -exec sed -i 's/Nekobox/XRAY/g' {} +
-          find . -type f \( -name "*.cpp" -o -name "*.h" -o -name "*.ui" \) -exec sed -i 's/Nekoray/XRAY/g' {} +
-          # 篡改系统底层固化的版本号
-          if [ -f "nekoray_version.txt" ]; then echo "2026.1.0-Stealth" > nekoray_version.txt; fi
-
-      - name: Run Python Injector (AnyTLS Surgery)
+      - name: Run Python Injector (Surgery & Safe Scrub)
         env:
           PYTHONIOENCODING: utf8
         run: |
@@ -59,14 +48,14 @@ jobs:
         with:
           go-version: '>=1.20'
 
-      - name: Build Custom Core with gRPC (解决崩溃断连的核心步骤)
+      - name: Build Custom Core with gRPC
         shell: bash
         run: |
-          echo ">>> 开始拉取源码并注入 gRPC 接口编译专属核心..."
+          echo ">>> 拉取源码并编译含 gRPC 的专属核心..."
           if [ -f "./libs/get_source.sh" ]; then bash ./libs/get_source.sh; fi
           if [ -f "./libs/build_go.sh" ]; then GOOS=windows GOARCH=amd64 bash ./libs/build_go.sh; fi
 
-      - name: Download Geo Assets (加载全球路由地图)
+      - name: Download Geo Assets
         shell: pwsh
         run: |
           Invoke-WebRequest -Uri "https://github.com/SagerNet/sing-geosite/releases/latest/download/geosite.db" -OutFile "./geosite.db"
@@ -91,12 +80,10 @@ jobs:
         run: |
           mkdir release_dist
           
-          # 生成随机 8 位名字
           $randName = -join ((65..90) + (97..122) + (48..57) | Get-Random -Count 8 | % {[char]$_})
           echo "RANDOM_EXE_NAME=$randName" >> $env:GITHUB_ENV
           $targetExe = "./release_dist/$randName.exe"
           
-          # 注意：这里我们提取的是刚才我们自行编译出来的专属 nekobox_core.exe，带有 gRPC 通讯接口
           Copy-Item "./build/nekobox.exe" -Destination $targetExe
           Copy-Item "./build/nekobox_core.exe" -Destination "./release_dist/nekobox_core.exe"
           Copy-Item "./geosite.db" -Destination "./release_dist/geosite.db"
@@ -104,11 +91,9 @@ jobs:
           
           windeployqt --release $targetExe
           
-          # UPX 极限加壳混淆
           choco install upx --no-progress
           upx --best $targetExe
           
-          # 尾部掺水：注入垃圾数据打破静态 Hash 特征
           $paddingSize = Get-Random -Minimum 10240 -Maximum 153600
           $padding = New-Object byte[] $paddingSize
           (New-Object Random).NextBytes($padding)
@@ -116,8 +101,6 @@ jobs:
           
           cmd.exe /c "copy /b $([System.IO.Path]::GetFullPath($targetExe)) + water.bin target_watered.exe"
           Move-Item -Path "target_watered.exe" -Destination $targetExe -Force
-          
-          echo ">>> 混淆及打包完成！"
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
