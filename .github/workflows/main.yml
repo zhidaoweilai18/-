@@ -75,7 +75,7 @@ jobs:
           $timestamp = Get-Date -Format "yyyyMMddHHmm"
           echo "BUILD_VERSION=V$timestamp" >> $env:GITHUB_ENV
 
-      - name: Package, Obfuscate and Water-mark
+- name: Package, Obfuscate and Water-mark
         shell: pwsh
         run: |
           mkdir release_dist
@@ -84,16 +84,31 @@ jobs:
           echo "RANDOM_EXE_NAME=$randName" >> $env:GITHUB_ENV
           $targetExe = "./release_dist/$randName.exe"
           
+          # 拷贝 C++ 主程序
           Copy-Item "./build/nekobox.exe" -Destination $targetExe
-          Copy-Item "./build/nekobox_core.exe" -Destination "./release_dist/nekobox_core.exe"
+          
+          # 自动全图搜索 Go 编译出来的核心文件，不论在哪都抓过来
+          $coreFile = Get-ChildItem -Path . -Filter "*_core.exe" -Recurse | Select-Object -First 1
+          if ($coreFile) {
+              Copy-Item $coreFile.FullName -Destination "./release_dist/nekobox_core.exe"
+              echo ">>> 成功找到并提取专属核心: $($coreFile.FullName)"
+          } else {
+              Write-Error ">>> 灾难性错误：未找到编译好的核心文件！"
+              exit 1
+          }
+          
+          # 拷贝路由数据库
           Copy-Item "./geosite.db" -Destination "./release_dist/geosite.db"
           Copy-Item "./geoip.db" -Destination "./release_dist/geoip.db"
           
+          # 自动补全运行库
           windeployqt --release $targetExe
           
+          # 极限加壳混淆
           choco install upx --no-progress
           upx --best $targetExe
           
+          # 尾部掺入垃圾数据，打乱哈希
           $paddingSize = Get-Random -Minimum 10240 -Maximum 153600
           $padding = New-Object byte[] $paddingSize
           (New-Object Random).NextBytes($padding)
@@ -101,7 +116,7 @@ jobs:
           
           cmd.exe /c "copy /b $([System.IO.Path]::GetFullPath($targetExe)) + water.bin target_watered.exe"
           Move-Item -Path "target_watered.exe" -Destination $targetExe -Force
-
+          
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
