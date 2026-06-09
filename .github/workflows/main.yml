@@ -75,7 +75,7 @@ jobs:
           $timestamp = Get-Date -Format "yyyyMMddHHmm"
           echo "BUILD_VERSION=V$timestamp" >> $env:GITHUB_ENV
 
-- name: Package, Obfuscate and Water-mark
+      - name: Package, Obfuscate and Water-mark
         shell: pwsh
         run: |
           mkdir release_dist
