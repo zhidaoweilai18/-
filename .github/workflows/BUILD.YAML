@@ -1,0 +1,118 @@
+name: Build Stealth Client (Obfuscated Edition)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-2022
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Qt 5.15.2
+        uses: jurplel/install-qt-action@v3
+        with:
+          version: '5.15.2'
+          host: 'windows'
+          target: 'desktop'
+          arch: 'win64_msvc2019_64'
+
+      - name: Setup MSVC & Ninja
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Install Ninja
+        run: choco install ninja
+        
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Run Python Injector (AnyTLS Surgery)
+        env:
+          PYTHONIOENCODING: utf8
+        run: |
+          python inject_anytls.py
+
+      - name: Build C++ Dependencies
+        shell: bash
+        run: |
+          bash ./libs/build_deps_all.sh
+
+      - name: Setup Go Environment
+        uses: actions/setup-go@v5
+        with:
+          go-version: '>=1.20'
+
+      - name: Build Go Components
+        shell: bash
+        run: |
+          if [ -f "./libs/get_source.sh" ]; then bash ./libs/get_source.sh; fi
+          if [ -f "./libs/build_go.sh" ]; then GOOS=windows GOARCH=amd64 bash ./libs/build_go.sh; fi
+
+      - name: Inject Latest Sing-box Core
+        shell: pwsh
+        run: |
+          $api_url = "https://api.github.com/repos/SagerNet/sing-box/releases/latest"
+          $tag = (Invoke-RestMethod -Uri $api_url).tag_name
+          $ver = $tag.TrimStart('v')
+          $dl_url = "https://github.com/SagerNet/sing-box/releases/download/$tag/sing-box-$ver-windows-amd64.zip"
+          Invoke-WebRequest -Uri $dl_url -OutFile "core.zip"
+          Expand-Archive -Path "core.zip" -DestinationPath "./core_temp"
+          Get-ChildItem -Path "./core_temp" -Filter "sing-box.exe" -Recurse | Move-Item -Destination "./sing-box.exe"
+
+      - name: Build Main Application
+        shell: pwsh
+        run: |
+          mkdir build
+          cd build
+          cmake .. -GNinja -DCMAKE_BUILD_TYPE=Release
+          ninja
+
+      - name: Generate Dynamic Versioning
+        shell: pwsh
+        run: |
+          $timestamp = Get-Date -Format "yyyyMMddHHmm"
+          echo "BUILD_VERSION=V$timestamp" >> $env:GITHUB_ENV
+
+      - name: Package, Obfuscate and Water-mark
+        shell: pwsh
+        run: |
+          mkdir release_dist
+          
+          # 1. 生成 8 位随机字母数字组合
+          $randName = -join ((65..90) + (97..122) + (48..57) | Get-Random -Count 8 | % {[char]$_})
+          echo "RANDOM_EXE_NAME=$randName" >> $env:GITHUB_ENV
+          $targetExe = "./release_dist/$randName.exe"
+          
+          # 2. 拷贝核心与主程序并重命名 (直接把核心命名为 nekobox_core.exe 修复启动报错)
+          Copy-Item "./build/nekobox.exe" -Destination $targetExe
+          Copy-Item "./sing-box.exe" -Destination "./release_dist/nekobox_core.exe"
+          
+          # 3. 补全 Qt 依赖
+          windeployqt --release $targetExe
+          
+          # 4. UPX 极限加壳混淆
+          choco install upx --no-progress
+          upx --best $targetExe
+          
+          # 5. 尾部掺水：注入垃圾数据打破静态特征
+          $paddingSize = Get-Random -Minimum 10240 -Maximum 153600
+          $padding = New-Object byte[] $paddingSize
+          (New-Object Random).NextBytes($padding)
+          [System.IO.File]::WriteAllBytes("water.bin", $padding)
+          
+          cmd.exe /c "copy /b $([System.IO.Path]::GetFullPath($targetExe)) + water.bin target_watered.exe"
+          Move-Item -Path "target_watered.exe" -Destination $targetExe -Force
+          
+          echo ">>> 混淆完成！主程序名: $randName.exe"
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Stealth-Client-${{ env.BUILD_VERSION }}
+          path: ./release_dist/
